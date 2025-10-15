@@ -28,9 +28,12 @@ type nilChecker struct {
 
 	// Path-sensitive analysis
 	pathAnalyzer *PathAnalyzer
+
+	// Proto file parser for accurate field optionality
+	protoParser *ProtoFileParser
 }
 
-func newNilChecker(pass *analysis.Pass, pa *protoAnalyzer, ga *grpcAnalyzer) *nilChecker {
+func newNilChecker(pass *analysis.Pass, pa *protoAnalyzer, ga *grpcAnalyzer, protoParser *ProtoFileParser) *nilChecker {
 	return &nilChecker{
 		pass:          pass,
 		protoAnalyzer: pa,
@@ -38,6 +41,7 @@ func newNilChecker(pass *analysis.Pass, pa *protoAnalyzer, ga *grpcAnalyzer) *ni
 		nilVars:       make(map[string]bool),
 		summaryCache:  newSummaryCache(pass),
 		pathAnalyzer:  newPathAnalyzer(),
+		protoParser:   protoParser,
 	}
 }
 
@@ -663,8 +667,8 @@ func (nc *nilChecker) getStructFieldInfo(st *types.Struct, fieldName string) *pr
 				info.isMessage = true
 				info.nestedType = nc.getTypeName(ptr.Elem())
 				info.typeName = info.nestedType
-				// Check proto tags for optional
-				info.isOptional = nc.hasOptionalTag(st, i)
+				// Check if field is optional (uses proto files if available)
+				info.isOptional = nc.isFieldOptional(st, i, fieldName)
 			} else if slice, ok := fieldType.(*types.Slice); ok {
 				// Repeated field
 				info.isRepeated = true
@@ -683,8 +687,24 @@ func (nc *nilChecker) getStructFieldInfo(st *types.Struct, fieldName string) *pr
 	return nil
 }
 
-// hasOptionalTag checks if a field has the optional protobuf tag
-func (nc *nilChecker) hasOptionalTag(st *types.Struct, fieldIndex int) bool {
+// isFieldOptional checks if a field is optional using proto files or struct tags
+func (nc *nilChecker) isFieldOptional(st *types.Struct, fieldIndex int, fieldName string) bool {
+	// If we have proto files parsed, use them (most accurate)
+	if nc.protoParser != nil && nc.protoParser.hasProtoFiles() {
+		// Try to find the message name for this struct
+		// Check all known proto messages to see if any match
+		for messageName, msgInfo := range nc.protoAnalyzer.protoMessages {
+			// If this message has a field with the same name, check proto definition
+			if _, exists := msgInfo.fields[fieldName]; exists {
+				// Ask proto parser if this field is optional
+				if nc.protoParser.isOptionalField(messageName, fieldName) {
+					return true
+				}
+			}
+		}
+	}
+
+	// Fall back to struct tag checking
 	tag := st.Tag(fieldIndex)
 	return contains(tag, "optional")
 }

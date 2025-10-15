@@ -2,6 +2,8 @@ package analyzer
 
 import (
 	"go/ast"
+	"os"
+	"path/filepath"
 
 	"golang.org/x/tools/go/analysis"
 )
@@ -18,10 +20,13 @@ var Analyzer = &analysis.Analyzer{
 
 // run is the main entry point for the analyzer
 func run(pass *analysis.Pass) (any, error) {
+	// Find workspace root and parse proto files
+	workspaceRoot := findWorkspaceRoot(pass.Pkg.Path())
+
 	// Initialize our analyzers
 	protoAnalyzer := newProtoAnalyzer(pass)
 	grpcAnalyzer := newGRPCAnalyzer(pass, protoAnalyzer)
-	nilChecker := newNilChecker(pass, protoAnalyzer, grpcAnalyzer)
+	nilChecker := newNilChecker(pass, protoAnalyzer, grpcAnalyzer, newProtoFileParser(pass, workspaceRoot))
 
 	// Single pass: do all analysis in one traversal
 	for _, file := range pass.Files {
@@ -42,4 +47,27 @@ func run(pass *analysis.Pass) (any, error) {
 	}
 
 	return nil, nil
+}
+
+// findWorkspaceRoot attempts to find the workspace root directory
+func findWorkspaceRoot(pkgPath string) string {
+	// Try to find go.mod by walking up
+	dir, err := os.Getwd()
+	if err != nil {
+		return "."
+	}
+
+	for {
+		if _, err := os.Stat(filepath.Join(dir, "go.mod")); err == nil {
+			return dir
+		}
+
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			break // Reached root
+		}
+		dir = parent
+	}
+
+	return "."
 }

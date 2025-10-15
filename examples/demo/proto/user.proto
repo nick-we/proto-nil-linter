@@ -1,0 +1,39 @@
+syntax = "proto3";
+
+package demo;
+
+option go_package = "demo";
+
+message User {
+  string name = 1;
+  string email = 2;
+  optional string nickname = 3;     // OPTIONAL scalar - can be nil
+  Address address = 4;              // REQUIRED message - cannot be nil
+  optional Profile profile = 5;     // OPTIONAL message - can be nil
+}
+
+message Address {
+  string street = 1;
+  string city = 2;
+  optional string apartment = 3;    // OPTIONAL scalar - can be nil
+  optional Location location = 4;   // OPTIONAL sub-message - can be nil
+}
+
+message Location {
+  double latitude = 1;
+  double longitude = 2;
+}
+
+message Profile {
+  string bio = 1;
+  optional string avatar_url = 2;   // OPTIONAL scalar - can be nil
+}
+
+message UserResponse {
+  User user = 1;                    // REQUIRED - cannot be nil
+  optional User related_user = 2;   // OPTIONAL message - can be nil
+}
+
+message UserRequest {
+  string user_id = 1;
+}

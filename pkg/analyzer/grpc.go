@@ -122,11 +122,7 @@ func (ga *grpcAnalyzer) isGRPCHandler(fn *ast.FuncDecl) bool {
 
 	// Second return value should be error
 	secondReturn := fn.Type.Results.List[1]
-	if !ga.isErrorType(secondReturn.Type) {
-		return false
-	}
-
-	return true
+	return ga.isErrorType(secondReturn.Type)
 }
 
 // extractHandlerInfo extracts information about a gRPC handler
