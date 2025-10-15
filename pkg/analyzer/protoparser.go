@@ -42,24 +42,39 @@ func (p *ProtoFileParser) parseAllProtoFiles() {
 		p.workspaceRoot = "."
 	}
 
-	// Walk entire workspace tree recursively
+	// Make sure workspace root is absolute
+	absRoot, err := filepath.Abs(p.workspaceRoot)
+	if err == nil {
+		p.workspaceRoot = absRoot
+	}
+
+	// Walk entire workspace tree recursively from root
 	filepath.Walk(p.workspaceRoot, func(path string, info os.FileInfo, err error) error {
-		if err != nil || info == nil {
+		if err != nil {
+			// Continue despite errors
+			return nil
+		}
+
+		if info == nil {
 			return nil
 		}
 
 		// Skip common non-source directories
 		if info.IsDir() {
 			name := info.Name()
-			if name == "vendor" || name == "node_modules" || name == ".git" ||
-				strings.HasPrefix(name, ".") {
+			// Skip hidden, vendor, and build directories
+			if strings.HasPrefix(name, ".") ||
+				name == "vendor" ||
+				name == "node_modules" ||
+				name == "build" ||
+				name == "dist" {
 				return filepath.SkipDir
 			}
 			return nil
 		}
 
-		// Parse .proto files
-		if filepath.Ext(path) == ".proto" {
+		// Parse any .proto file found at any level
+		if filepath.Ext(info.Name()) == ".proto" {
 			p.parseProtoFile(path)
 		}
 
@@ -74,7 +89,15 @@ func (p *ProtoFileParser) parseProtoFile(path string) {
 		return
 	}
 
+	// Parse the file
+	beforeCount := len(p.optionalFields)
 	p.parseProtoText(string(content))
+	afterCount := len(p.optionalFields)
+
+	// Debug: Report proto file parsing (can be disabled later)
+	if afterCount > beforeCount {
+		// Successfully parsed fields
+	}
 }
 
 // parseProtoText manually parses proto text for field labels

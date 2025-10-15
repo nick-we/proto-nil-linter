@@ -696,24 +696,26 @@ func (nc *nilChecker) getStructFieldInfo(st *types.Struct, fieldName string) *pr
 
 // isFieldOptional checks if a field is optional using proto files or struct tags
 func (nc *nilChecker) isFieldOptional(st *types.Struct, fieldIndex int, fieldName string) bool {
-	// If we have proto files parsed, use them (most accurate)
+	// Primary method: Check struct tags (most reliable for generated code)
+	tag := st.Tag(fieldIndex)
+	if contains(tag, "optional") {
+		return true
+	}
+
+	// Secondary: If we have proto files, try to match
+	// This is for cases where generated code doesn't include "optional" in tags
 	if nc.protoParser != nil && nc.protoParser.hasProtoFiles() {
-		// Try to find the message name for this struct
-		// Check all known proto messages to see if any match
-		for messageName, msgInfo := range nc.protoAnalyzer.protoMessages {
-			// If this message has a field with the same name, check proto definition
-			if _, exists := msgInfo.fields[fieldName]; exists {
-				// Ask proto parser if this field is optional
-				if nc.protoParser.isOptionalField(messageName, fieldName) {
-					return true
-				}
+		// Try all possible message names since Go struct name might not match proto exactly
+		for messageName := range nc.protoAnalyzer.protoMessages {
+			// Check if proto parser knows about this message.field combination
+			if nc.protoParser.isOptionalField(messageName, fieldName) {
+				return true
 			}
 		}
 	}
 
-	// Fall back to struct tag checking
-	tag := st.Tag(fieldIndex)
-	return contains(tag, "optional")
+	// Default: Not optional
+	return false
 }
 
 // isRequestType checks if a type name indicates a request message
