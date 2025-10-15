@@ -121,6 +121,44 @@ func mergePathStates(s1, s2 *PathState) *PathState {
 		merged.setVar(v, combineNilStates([]NilState{state1, state2}))
 	}
 
+	// Merge field initialization information
+	// Conservative approach: take the most restrictive (fewest initialized fields)
+	allFieldVars := make(map[string]bool)
+	for v := range s1.varFields {
+		allFieldVars[v] = true
+	}
+	for v := range s2.varFields {
+		allFieldVars[v] = true
+	}
+
+	for v := range allFieldVars {
+		fields1 := s1.getVarFields(v)
+		fields2 := s2.getVarFields(v)
+
+		// Merge field maps
+		var mergedFields map[string]bool
+
+		if fields1 != nil && fields2 != nil {
+			// Both paths have field info - intersect (only fields in both)
+			mergedFields = make(map[string]bool)
+			for f := range fields1 {
+				if fields2[f] {
+					mergedFields[f] = true
+				}
+			}
+		} else if fields1 != nil {
+			// Only path 1 has field info - use it
+			mergedFields = fields1
+		} else if fields2 != nil {
+			// Only path 2 has field info - use it
+			mergedFields = fields2
+		}
+
+		if mergedFields != nil {
+			merged.setVarFields(v, mergedFields)
+		}
+	}
+
 	return merged
 }
 
