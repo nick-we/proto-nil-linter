@@ -185,6 +185,9 @@ func (pa *PathAnalyzer) analyzeStmt(stmt ast.Stmt, checker *nilChecker) {
 	case *ast.IfStmt:
 		pa.analyzeIfStmt(s, checker)
 
+	case *ast.SwitchStmt:
+		pa.analyzeSwitchStmt(s, checker)
+
 	case *ast.AssignStmt:
 		pa.analyzeAssignStmt(s, checker)
 
@@ -412,6 +415,46 @@ func (pa *PathAnalyzer) extractInitializedFields(comp *ast.CompositeLit) map[str
 	}
 
 	return fields
+}
+
+// analyzeSwitchStmt analyzes a switch statement
+func (pa *PathAnalyzer) analyzeSwitchStmt(switchStmt *ast.SwitchStmt, checker *nilChecker) {
+	// Collect states from all cases
+	var caseStates []*PathState
+
+	// Save initial state
+	initialState := pa.currentState.copy()
+
+	// Analyze each case
+	for _, clause := range switchStmt.Body.List {
+		caseClause, ok := clause.(*ast.CaseClause)
+		if !ok {
+			continue
+		}
+
+		// Start with initial state for each case
+		pa.currentState = initialState.copy()
+
+		// Analyze case body
+		for _, stmt := range caseClause.Body {
+			pa.analyzeStmt(stmt, checker)
+		}
+
+		// Save state after this case
+		caseStates = append(caseStates, pa.currentState.copy())
+	}
+
+	// Merge all case states
+	if len(caseStates) == 0 {
+		return
+	}
+
+	merged := caseStates[0]
+	for i := 1; i < len(caseStates); i++ {
+		merged = mergePathStates(merged, caseStates[i])
+	}
+
+	pa.currentState = merged
 }
 
 // getVarInitializedFields gets which fields were initialized for a variable
