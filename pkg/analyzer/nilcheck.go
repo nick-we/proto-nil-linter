@@ -4,6 +4,7 @@ import (
 	"go/ast"
 	"go/token"
 	"go/types"
+	"strings"
 
 	"golang.org/x/tools/go/analysis"
 )
@@ -187,6 +188,12 @@ func (nc *nilChecker) checkCompositeLitFields(comp *ast.CompositeLit, pos token.
 	// Remove pointer if present
 	if ptr, ok := compType.(*types.Pointer); ok {
 		compType = ptr.Elem()
+	}
+
+	// Get type name for checking if it's a request
+	typeNameCheck := nc.getTypeName(compType)
+	if nc.isRequestType(typeNameCheck) {
+		return // Skip request messages
 	}
 
 	// Check if it's a slice type
@@ -707,6 +714,14 @@ func (nc *nilChecker) isFieldOptional(st *types.Struct, fieldIndex int, fieldNam
 	// Fall back to struct tag checking
 	tag := st.Tag(fieldIndex)
 	return contains(tag, "optional")
+}
+
+// isRequestType checks if a type name indicates a request message
+func (nc *nilChecker) isRequestType(typeName string) bool {
+	// Common patterns for request messages that should not be validated
+	return strings.HasSuffix(typeName, "Request") ||
+		strings.HasSuffix(typeName, "Req") ||
+		strings.Contains(typeName, "Request")
 }
 
 // reportNilAssignment reports a nil assignment to a non-optional field
