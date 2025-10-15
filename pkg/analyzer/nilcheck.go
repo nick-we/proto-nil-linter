@@ -309,8 +309,9 @@ func (nc *nilChecker) checkMissingFields(structType *types.Struct, explicitField
 			continue
 		}
 
-		// Check if field is non-optional and a pointer type (would be implicitly nil)
-		if !fieldInfo.isOptional && (fieldInfo.isMessage || fieldInfo.isRepeated) {
+		// Check if field is non-optional and a message pointer (would be implicitly nil)
+		// Note: Repeated fields (slices) being nil is OK in proto3 (treated as empty)
+		if !fieldInfo.isOptional && fieldInfo.isMessage && !fieldInfo.isRepeated {
 			nc.pass.Reportf(
 				pos,
 				"missing initialization of non-optional proto field %s.%s in %s (field is implicitly nil)",
