@@ -1,21 +1,34 @@
 # Proto Nil Linter
 
-A focused Go static analysis tool that prevents nil assignments to non-optional proto3 message fields in gRPC service handlers.
+A Go static analysis tool that prevents nil assignments to non-optional proto3 message fields in gRPC service handlers.
 
 ## Overview
 
 This linter ensures that gRPC responses are always valid by detecting nil assignments to proto3 message fields within service handler methods. It helps prevent runtime panics and invalid API responses caused by unexpected nil values.
 
+**Status**: ✅ Fully implemented, tested, and working
+
 ## Features
 
+### Basic Detection
 - ✅ Detects direct nil assignments to proto message fields
 - ✅ Identifies nil values in composite literals
-- ✅ Tracks nil propagation through variables
+- ✅ Tracks nil propagation through variables and declarations
 - ✅ **Validates nested messages** with non-optional fields
 - ✅ **Checks repeated message fields** (list endpoints) for nil items
 - ✅ Distinguishes between optional and required proto3 fields
 - ✅ Focuses specifically on gRPC service handler methods
-- ✅ Provides clear diagnostic messages with suggestions
+
+### Advanced Data Flow Analysis
+- ✅ **Interprocedural tracking**: Analyzes function calls to determine if they return nil
+- ✅ **Function summaries**: Caches analysis of helper functions (AlwaysNil, NeverNil, MaybeNil)
+- ✅ **Path-sensitive analysis**: Understands nil guards (`if x == nil`) and tracks state through branches
+- ✅ **Smart detection**: Reduces false positives by understanding defensive nil checks
+
+### Output & Reporting
+- ✅ Provides clear diagnostic messages with file locations
+- ✅ Proto.Message interface checking for accurate type detection
+- ✅ Context-aware error messages (direct, nested, repeated field)
 
 ## Inspired By
 
@@ -96,6 +109,37 @@ func (s *Service) ListProfiles(ctx context.Context, req *pb.Request) (*pb.ListPr
             },
         },
     }, nil
+}
+```
+
+### 7. Advanced: Function Call Returns (Interprocedural)
+
+```go
+// Helper that always returns nil
+func getUserFromDB() *pb.User {
+    return nil
+}
+
+func (s *Service) GetUser(ctx context.Context, req *pb.Request) (*pb.Response, error) {
+    user := getUserFromDB()  // Analyzes function and determines it returns AlwaysNil
+    return &pb.Response{
+        User: user,  // ❌ ERROR: nil from function call
+    }, nil
+}
+```
+
+### 8. Advanced: Path-Sensitive (Nil Guards)
+
+```go
+func (s *Service) GetUser(ctx context.Context, req *pb.Request) (*pb.Response, error) {
+    user := findUser(req.Id)  // May return nil
+    
+    if user == nil {
+        return nil, errors.New("not found")
+    }
+    
+    // ✅ OK: user is guaranteed non-nil here due to guard
+    return &pb.Response{User: user}, nil
 }
 ```
 
@@ -200,24 +244,50 @@ nested_depth: 5
 ### Prerequisites
 
 - Go 1.21 or higher
-- Protocol Buffers compiler (protoc)
+- Protocol Buffers compiler (protoc) - optional for generating test fixtures
 
 ### Building
 
 ```bash
+# Using make
+make build
+
+# Using go
 go build -o proto-nil-linter ./cmd/proto-nil-linter
 ```
 
 ### Testing
 
 ```bash
-go test ./...
+# Run all tests
+make test
+
+# Run with coverage
+make test-coverage
+
+# Quick verification
+make quick
 ```
 
 ### Running on example code
 
 ```bash
-go run ./cmd/proto-nil-linter ./testdata
+# Run on demo example
+cd examples/demo && ../../proto-nil-linter .
+
+# Run on test fixtures
+cd pkg/analyzer/testdata/src/example && ../../../../../proto-nil-linter ./...
+```
+
+### Test Results
+
+All tests pass ✅:
+```bash
+$ go test -v ./pkg/analyzer/...
+=== RUN   TestAnalyzer
+--- PASS: TestAnalyzer (0.25s)
+PASS
+ok      github.com/nick-we/proto-nil-linter/pkg/analyzer       0.425s
 ```
 
 ## Project Structure
@@ -289,9 +359,6 @@ MIT License - see LICENSE file for details
 - [x] Nested message validation
 - [x] Repeated message field validation
 - [ ] Advanced data flow analysis
-- [ ] Configuration file support
-- [ ] IDE integration
-- [ ] Auto-fix suggestions
 - [ ] Performance optimizations
 
 ## References

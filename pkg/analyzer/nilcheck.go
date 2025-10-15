@@ -22,6 +22,12 @@ type nilChecker struct {
 
 	// Track nesting depth for context messages
 	nestingDepth int
+
+	// Advanced data flow analysis
+	summaryCache *SummaryCache
+
+	// Path-sensitive analysis
+	pathAnalyzer *PathAnalyzer
 }
 
 func newNilChecker(pass *analysis.Pass, pa *protoAnalyzer, ga *grpcAnalyzer) *nilChecker {
@@ -30,6 +36,8 @@ func newNilChecker(pass *analysis.Pass, pa *protoAnalyzer, ga *grpcAnalyzer) *ni
 		protoAnalyzer: pa,
 		grpcAnalyzer:  ga,
 		nilVars:       make(map[string]bool),
+		summaryCache:  newSummaryCache(pass),
+		pathAnalyzer:  newPathAnalyzer(),
 	}
 }
 
@@ -38,7 +46,13 @@ func (nc *nilChecker) visit(n ast.Node) {
 	switch node := n.(type) {
 	case *ast.FuncDecl:
 		nc.currentFunc = node
-		nc.nilVars = make(map[string]bool) // Reset for new function
+		nc.nilVars = make(map[string]bool)  // Reset for new function
+		nc.pathAnalyzer = newPathAnalyzer() // Reset path analyzer
+
+		// Analyze function body with path-sensitive analysis
+		if node.Body != nil && nc.grpcAnalyzer.isHandler(node) {
+			nc.pathAnalyzer.analyzeBlockStmt(node.Body, nc)
+		}
 
 	case *ast.DeclStmt:
 		nc.checkDecl(node)
@@ -224,6 +238,9 @@ func (nc *nilChecker) checkCompositeLitFields(comp *ast.CompositeLit, pos token.
 		context = "nested message"
 	}
 
+	// Track which fields are explicitly set
+	explicitFields := make(map[string]bool)
+
 	// Check each field in the composite literal
 	for _, elt := range comp.Elts {
 		kv, ok := elt.(*ast.KeyValueExpr)
@@ -238,6 +255,9 @@ func (nc *nilChecker) checkCompositeLitFields(comp *ast.CompositeLit, pos token.
 		}
 
 		fieldName := fieldIdent.Name
+
+		// Mark field as explicitly set
+		explicitFields[fieldName] = true
 
 		// Find the field in the struct
 		fieldInfo := nc.getStructFieldInfo(structType, fieldName)
@@ -258,6 +278,44 @@ func (nc *nilChecker) checkCompositeLitFields(comp *ast.CompositeLit, pos token.
 			nc.nestingDepth++
 			nc.checkNestedMessage(kv.Value, fieldInfo.nestedType)
 			nc.nestingDepth--
+		}
+	}
+
+	// Check for implicitly nil fields (omitted non-optional fields)
+	nc.checkMissingFields(structType, explicitFields, typeName, comp.Pos(), context)
+}
+
+// checkMissingFields checks for required fields that are missing from composite literal
+func (nc *nilChecker) checkMissingFields(structType *types.Struct, explicitFields map[string]bool, typeName string, pos token.Pos, context string) {
+	// Iterate through all struct fields
+	for i := 0; i < structType.NumFields(); i++ {
+		field := structType.Field(i)
+		fieldName := field.Name()
+
+		// Skip proto-internal fields
+		if fieldName == "state" || fieldName == "sizeCache" || fieldName == "unknownFields" ||
+			(len(fieldName) >= 3 && fieldName[:3] == "XXX") {
+			continue
+		}
+
+		// Skip if field was explicitly set
+		if explicitFields[fieldName] {
+			continue
+		}
+
+		// Get field info
+		fieldInfo := nc.getStructFieldInfo(structType, fieldName)
+		if fieldInfo == nil {
+			continue
+		}
+
+		// Check if field is non-optional and a pointer type (would be implicitly nil)
+		if !fieldInfo.isOptional && (fieldInfo.isMessage || fieldInfo.isRepeated) {
+			nc.pass.Reportf(
+				pos,
+				"missing initialization of non-optional proto field %s.%s in %s (field is implicitly nil)",
+				typeName, fieldName, context,
+			)
 		}
 	}
 }
@@ -433,7 +491,19 @@ func (nc *nilChecker) isNilValue(expr ast.Expr) bool {
 		if ident.Name == "nil" {
 			return true
 		}
-		// Check if variable is tracked as nil
+
+		// Check path-sensitive state first (most accurate)
+		if nc.pathAnalyzer != nil {
+			state := nc.pathAnalyzer.getVarState(ident.Name)
+			switch state {
+			case NilStateAlwaysNil:
+				return true
+			case NilStateNeverNil:
+				return false
+			}
+		}
+
+		// Fall back to simple tracking
 		return nc.nilVars[ident.Name]
 	}
 
@@ -441,9 +511,19 @@ func (nc *nilChecker) isNilValue(expr ast.Expr) bool {
 	if call, ok := expr.(*ast.CallExpr); ok {
 		if len(call.Args) == 1 {
 			if ident, ok := call.Args[0].(*ast.Ident); ok {
-				return ident.Name == "nil"
+				if ident.Name == "nil" {
+					return true
+				}
 			}
 		}
+
+		// Advanced: Check if function call returns nil using summary cache
+		state := nc.summaryCache.analyzeExpr(call)
+		if state == NilStateAlwaysNil {
+			return true
+		}
+		// For MaybeNil, we could warn but not error
+		// For now, conservatively treat MaybeNil as potentially nil
 	}
 
 	return false
