@@ -274,6 +274,11 @@ func (nc *nilChecker) checkCompositeLitFields(comp *ast.CompositeLit, pos token.
 			// Check repeated field for nil items
 			nc.checkRepeatedField(kv.Value, typeName, fieldName, fieldInfo)
 		} else if fieldInfo.isMessage {
+			// Check if value is a variable with tracked field initialization
+			if ident, ok := kv.Value.(*ast.Ident); ok {
+				nc.checkVariableFieldCompleteness(ident, fieldInfo, kv.Pos(), context)
+			}
+
 			// Check nested message fields - increase nesting depth
 			nc.nestingDepth++
 			nc.checkNestedMessage(kv.Value, fieldInfo.nestedType)
@@ -283,6 +288,71 @@ func (nc *nilChecker) checkCompositeLitFields(comp *ast.CompositeLit, pos token.
 
 	// Check for implicitly nil fields (omitted non-optional fields)
 	nc.checkMissingFields(structType, explicitFields, typeName, comp.Pos(), context)
+}
+
+// checkVariableFieldCompleteness checks if a variable was initialized with all required nested fields
+func (nc *nilChecker) checkVariableFieldCompleteness(varIdent *ast.Ident, fieldInfo *protoFieldInfo, pos token.Pos, context string) {
+	varName := varIdent.Name
+
+	// Get which fields were initialized for this variable
+	if nc.pathAnalyzer == nil {
+		return
+	}
+
+	initializedFields := nc.pathAnalyzer.getVarInitializedFields(varName)
+	if initializedFields == nil {
+		return // Variable not tracked or not from composite literal
+	}
+
+	// Get the struct type of the variable to check its required fields
+	varType := nc.pass.TypesInfo.TypeOf(varIdent)
+	if varType == nil {
+		return
+	}
+
+	// Remove pointer if present
+	if ptr, ok := varType.(*types.Pointer); ok {
+		varType = ptr.Elem()
+	}
+
+	// Get struct type
+	var structType *types.Struct
+	if st, ok := varType.(*types.Struct); ok {
+		structType = st
+	} else if named, ok := varType.(*types.Named); ok {
+		if st, ok := named.Underlying().(*types.Struct); ok {
+			structType = st
+		}
+	}
+
+	if structType == nil {
+		return
+	}
+
+	// Check all fields of the struct
+	for i := 0; i < structType.NumFields(); i++ {
+		field := structType.Field(i)
+		nestedFieldName := field.Name()
+
+		// Skip proto-internal fields
+		if nestedFieldName == "state" || nestedFieldName == "sizeCache" ||
+			nestedFieldName == "unknownFields" || (len(nestedFieldName) >= 3 && nestedFieldName[:3] == "XXX") {
+			continue
+		}
+
+		// Check if field was initialized
+		if !initializedFields[nestedFieldName] {
+			// Field not initialized - check if it's required
+			nestedFieldInfo := nc.getStructFieldInfo(structType, nestedFieldName)
+			if nestedFieldInfo != nil && !nestedFieldInfo.isOptional && nestedFieldInfo.isMessage && !nestedFieldInfo.isRepeated {
+				nc.pass.Reportf(
+					pos,
+					"variable %s is missing initialization of non-optional nested field %s in %s (field is implicitly nil)",
+					varName, nestedFieldName, context,
+				)
+			}
+		}
+	}
 }
 
 // checkMissingFields checks for required fields that are missing from composite literal

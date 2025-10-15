@@ -12,6 +12,10 @@ type PathState struct {
 
 	// Conditions that hold on this path
 	conditions []PathCondition
+
+	// Track which fields are initialized for each variable
+	// Key: varName, Value: map of fieldName -> bool
+	varFields map[string]map[string]bool
 }
 
 // PathCondition represents a condition that holds on a path
@@ -25,6 +29,7 @@ func newPathState() *PathState {
 	return &PathState{
 		vars:       make(map[string]NilState),
 		conditions: []PathCondition{},
+		varFields:  make(map[string]map[string]bool),
 	}
 }
 
@@ -33,10 +38,18 @@ func (ps *PathState) copy() *PathState {
 	newState := &PathState{
 		vars:       make(map[string]NilState),
 		conditions: make([]PathCondition, len(ps.conditions)),
+		varFields:  make(map[string]map[string]bool),
 	}
 
 	for k, v := range ps.vars {
 		newState.vars[k] = v
+	}
+
+	for k, v := range ps.varFields {
+		newState.varFields[k] = make(map[string]bool)
+		for f, present := range v {
+			newState.varFields[k][f] = present
+		}
 	}
 
 	copy(newState.conditions, ps.conditions)
@@ -70,6 +83,16 @@ func (ps *PathState) addCondition(varName string, isNil bool) {
 	} else {
 		ps.vars[varName] = NilStateNeverNil
 	}
+}
+
+// setVarFields sets the initialized fields for a variable
+func (ps *PathState) setVarFields(varName string, fields map[string]bool) {
+	ps.varFields[varName] = fields
+}
+
+// getVarFields gets the initialized fields for a variable
+func (ps *PathState) getVarFields(varName string) map[string]bool {
+	return ps.varFields[varName]
 }
 
 // merge merges two path states at a join point
@@ -248,6 +271,19 @@ func (pa *PathAnalyzer) analyzeAssignStmt(assign *ast.AssignStmt, checker *nilCh
 			// Determine nil state of RHS
 			state := pa.determineNilState(rhs, checker)
 			pa.currentState.setVar(ident.Name, state)
+
+			// If RHS is a composite literal, track which fields are initialized
+			if comp, ok := rhs.(*ast.UnaryExpr); ok {
+				if comp.Op == token.AND {
+					if compLit, ok := comp.X.(*ast.CompositeLit); ok {
+						fields := pa.extractInitializedFields(compLit)
+						pa.currentState.setVarFields(ident.Name, fields)
+					}
+				}
+			} else if compLit, ok := rhs.(*ast.CompositeLit); ok {
+				fields := pa.extractInitializedFields(compLit)
+				pa.currentState.setVarFields(ident.Name, fields)
+			}
 		}
 	}
 }
@@ -269,6 +305,19 @@ func (pa *PathAnalyzer) analyzeDeclStmt(decl *ast.DeclStmt, checker *nilChecker)
 			if i < len(valueSpec.Values) {
 				state := pa.determineNilState(valueSpec.Values[i], checker)
 				pa.currentState.setVar(name.Name, state)
+
+				// Track field initialization for composite literals
+				if comp, ok := valueSpec.Values[i].(*ast.UnaryExpr); ok {
+					if comp.Op == token.AND {
+						if compLit, ok := comp.X.(*ast.CompositeLit); ok {
+							fields := pa.extractInitializedFields(compLit)
+							pa.currentState.setVarFields(name.Name, fields)
+						}
+					}
+				} else if compLit, ok := valueSpec.Values[i].(*ast.CompositeLit); ok {
+					fields := pa.extractInitializedFields(compLit)
+					pa.currentState.setVarFields(name.Name, fields)
+				}
 			}
 		}
 	}
@@ -310,4 +359,24 @@ func (pa *PathAnalyzer) determineNilState(expr ast.Expr, checker *nilChecker) Ni
 // getVarState gets the current nil state of a variable
 func (pa *PathAnalyzer) getVarState(varName string) NilState {
 	return pa.currentState.getVar(varName)
+}
+
+// extractInitializedFields extracts which fields are explicitly initialized in a composite literal
+func (pa *PathAnalyzer) extractInitializedFields(comp *ast.CompositeLit) map[string]bool {
+	fields := make(map[string]bool)
+
+	for _, elt := range comp.Elts {
+		if kv, ok := elt.(*ast.KeyValueExpr); ok {
+			if ident, ok := kv.Key.(*ast.Ident); ok {
+				fields[ident.Name] = true
+			}
+		}
+	}
+
+	return fields
+}
+
+// getVarInitializedFields gets which fields were initialized for a variable
+func (pa *PathAnalyzer) getVarInitializedFields(varName string) map[string]bool {
+	return pa.currentState.getVarFields(varName)
 }
