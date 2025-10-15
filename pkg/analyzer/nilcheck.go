@@ -50,7 +50,8 @@ func (nc *nilChecker) visit(n ast.Node) {
 		nc.pathAnalyzer = newPathAnalyzer() // Reset path analyzer
 
 		// Analyze function body with path-sensitive analysis
-		if node.Body != nil && nc.grpcAnalyzer.isHandler(node) {
+		// Check both gRPC handlers AND helper functions that return proto messages
+		if node.Body != nil && nc.grpcAnalyzer.isHandlerOrHelper(node) {
 			nc.pathAnalyzer.analyzeBlockStmt(node.Body, nc)
 		}
 
@@ -70,8 +71,8 @@ func (nc *nilChecker) visit(n ast.Node) {
 
 // checkDecl checks variable declarations for nil initialization
 func (nc *nilChecker) checkDecl(decl *ast.DeclStmt) {
-	// Only check if we're inside a gRPC handler
-	if nc.currentFunc == nil || !nc.grpcAnalyzer.isHandler(nc.currentFunc) {
+	// Only check if we're inside a gRPC handler or helper
+	if nc.currentFunc == nil || !nc.grpcAnalyzer.isHandlerOrHelper(nc.currentFunc) {
 		return
 	}
 
@@ -100,8 +101,8 @@ func (nc *nilChecker) checkDecl(decl *ast.DeclStmt) {
 
 // checkAssignment checks for nil assignments to proto fields
 func (nc *nilChecker) checkAssignment(assign *ast.AssignStmt) {
-	// Only check if we're inside a gRPC handler
-	if nc.currentFunc == nil || !nc.grpcAnalyzer.isHandler(nc.currentFunc) {
+	// Only check if we're inside a gRPC handler or helper
+	if nc.currentFunc == nil || !nc.grpcAnalyzer.isHandlerOrHelper(nc.currentFunc) {
 		return
 	}
 
@@ -137,8 +138,8 @@ func (nc *nilChecker) checkAssignment(assign *ast.AssignStmt) {
 
 // checkReturn checks return statements for nil in proto message fields
 func (nc *nilChecker) checkReturn(ret *ast.ReturnStmt) {
-	// Only check if we're inside a gRPC handler
-	if nc.currentFunc == nil || !nc.grpcAnalyzer.isHandler(nc.currentFunc) {
+	// Only check if we're inside a gRPC handler or helper
+	if nc.currentFunc == nil || !nc.grpcAnalyzer.isHandlerOrHelper(nc.currentFunc) {
 		return
 	}
 
@@ -162,8 +163,8 @@ func (nc *nilChecker) checkReturn(ret *ast.ReturnStmt) {
 
 // checkCompositeLit checks composite literals for nil values in proto fields
 func (nc *nilChecker) checkCompositeLit(comp *ast.CompositeLit) {
-	// Only check if we're inside a gRPC handler
-	if nc.currentFunc == nil || !nc.grpcAnalyzer.isHandler(nc.currentFunc) {
+	// Only check if we're inside a gRPC handler or helper
+	if nc.currentFunc == nil || !nc.grpcAnalyzer.isHandlerOrHelper(nc.currentFunc) {
 		return
 	}
 

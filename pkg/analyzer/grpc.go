@@ -15,6 +15,10 @@ type grpcAnalyzer struct {
 	// Map of function declarations that are gRPC handlers
 	// Key: function name, Value: response type information
 	handlers map[*ast.FuncDecl]*handlerInfo
+
+	// Map of helper functions that should also be checked
+	// Functions called from handlers or that return proto responses
+	helpers map[*ast.FuncDecl]bool
 }
 
 // handlerInfo contains information about a gRPC handler
@@ -30,10 +34,11 @@ func newGRPCAnalyzer(pass *analysis.Pass, pa *protoAnalyzer) *grpcAnalyzer {
 		pass:          pass,
 		protoAnalyzer: pa,
 		handlers:      make(map[*ast.FuncDecl]*handlerInfo),
+		helpers:       make(map[*ast.FuncDecl]bool),
 	}
 }
 
-// visit analyzes AST nodes to identify gRPC service handlers
+// visit analyzes AST nodes to identify gRPC service handlers and helpers
 func (ga *grpcAnalyzer) visit(n ast.Node) {
 	funcDecl, ok := n.(*ast.FuncDecl)
 	if !ok {
@@ -41,15 +46,40 @@ func (ga *grpcAnalyzer) visit(n ast.Node) {
 	}
 
 	// Check if this is a gRPC handler method
-	if !ga.isGRPCHandler(funcDecl) {
+	if ga.isGRPCHandler(funcDecl) {
+		// Extract response type information
+		info := ga.extractHandlerInfo(funcDecl)
+		if info != nil {
+			ga.handlers[funcDecl] = info
+		}
 		return
 	}
 
-	// Extract response type information
-	info := ga.extractHandlerInfo(funcDecl)
-	if info != nil {
-		ga.handlers[funcDecl] = info
+	// Check if this is a helper that returns a proto message
+	if ga.returnsProtoMessage(funcDecl) {
+		ga.helpers[funcDecl] = true
 	}
+}
+
+// returnsProtoMessage checks if a function returns a proto message
+func (ga *grpcAnalyzer) returnsProtoMessage(fn *ast.FuncDecl) bool {
+	if fn.Type.Results == nil || len(fn.Type.Results.List) == 0 {
+		return false
+	}
+
+	// Check if any return value is a pointer to what could be a proto message
+	for _, result := range fn.Type.Results.List {
+		if ga.isProtoPointerType(result.Type) {
+			return true
+		}
+	}
+
+	return false
+}
+
+// isHandlerOrHelper checks if a function is a handler or helper
+func (ga *grpcAnalyzer) isHandlerOrHelper(fn *ast.FuncDecl) bool {
+	return ga.isHandler(fn) || ga.helpers[fn]
 }
 
 // isGRPCHandler checks if a function is a gRPC service handler
